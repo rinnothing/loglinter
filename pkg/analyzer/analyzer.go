@@ -1,9 +1,13 @@
 package analyzer
 
 import (
-	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
+	"strconv"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
@@ -29,27 +33,24 @@ func run(pass *analysis.Pass) (interface{}, error) {
 	inspector.Preorder(nodeFilter, func(node ast.Node) {
 		funcCall := node.(*ast.CallExpr)
 
-		if isLogCall(pass, funcCall) {
-			fmt.Println("is logging")
-		} else {
-			fmt.Println("is not logging")
+		if !isLogCall(pass, funcCall) {
+			return
 		}
+
+		checkLowerFirst(pass, funcCall)
+		checkEnglish(pass, funcCall)
+		checkNoSpecialSymbols(pass, funcCall)
+		checkNoSensitiveData(pass, funcCall)
 	})
 
 	return nil, nil
 }
 
 func isLogCall(pass *analysis.Pass, funcCall *ast.CallExpr) bool {
-	// fmt.Println(reflect.TypeOf(funcCall.Fun).Elem())
 	selector, ok := funcCall.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return false
 	}
-
-	fmt.Println(selector.Sel.Name)
-
-	// fmt.Println(selector.X)
-	// fmt.Println(reflect.TypeOf(selector.X).Elem())
 
 	if onCall, ok := selector.X.(*ast.Ident); ok {
 		onCallObj := pass.TypesInfo.ObjectOf(onCall)
@@ -62,22 +63,12 @@ func isLogCall(pass *analysis.Pass, funcCall *ast.CallExpr) bool {
 		}
 
 		if onCallVar, ok := onCallObj.(*types.Var); ok {
-			// fmt.Println(onCallVar.Type().String())
-
 			varType := onCallVar.Type().String()
 			if varType == "*go.uber.org/zap.Logger" ||
 				varType == "*go.uber.org/zap.SugaredLogger" ||
 				varType == "*log/slog.Logger" {
 				return isLogMethod(selector.Sel.Name)
 			}
-
-			// if structType, ok := onCallVar.Type().(*types.Pointer); ok {
-			// 	fmt.Println(structType.Elem().String())
-			// 	fmt.Println(reflect.TypeOf(structType.Elem()).Elem())
-			// 	if namedType, ok := structType.Elem().(*types.Named); ok {
-			// 		fmt.Println(namedType.)
-			// 	}
-			// }
 		}
 
 	}
@@ -97,8 +88,6 @@ func isLogCall(pass *analysis.Pass, funcCall *ast.CallExpr) bool {
 		}
 	}
 
-	// fmt.Println(onCall.Name)
-
 	return false
 }
 
@@ -113,4 +102,87 @@ var logMethods = map[string]struct{}{
 func isLogMethod(name string) bool {
 	_, in := logMethods[name]
 	return in
+}
+
+func getFirstArgString(pass *analysis.Pass, funcCall *ast.CallExpr) (string, token.Pos) {
+	if len(funcCall.Args) == 0 {
+		return "", 0
+	}
+
+	fst := funcCall.Args[0]
+	strLit, ok := fst.(*ast.BasicLit)
+	if !ok {
+		return "", 0
+	}
+
+	str, err := strconv.Unquote(strLit.Value)
+	if err != nil {
+		pass.Reportf(strLit.ValuePos, "failed to unquote the string literal: '%s'", strLit.Value)
+		return "", 0
+	}
+
+	return str, strLit.ValuePos
+}
+
+func checkLowerFirst(pass *analysis.Pass, funcCall *ast.CallExpr) {
+	fst, pos := getFirstArgString(pass, funcCall)
+	if fst == "" {
+		return
+	}
+
+	chr, _ := utf8.DecodeRuneInString(fst)
+	if chr == utf8.RuneError || unicode.IsLower(chr) {
+		return
+	}
+
+	pass.Reportf(pos, "log messages should start from lowercase letter, but %10q doesn't", fst)
+}
+
+func checkEnglish(pass *analysis.Pass, funcCall *ast.CallExpr) {
+	fst, pos := getFirstArgString(pass, funcCall)
+	if fst == "" {
+		return
+	}
+
+	for i, ch := range fst {
+		if !unicode.Is(unicode.Latin, ch) {
+			pass.Reportf(pos+token.Pos(i), "log messages should be english only, but %d char in %10q isn't", i+1, fst)
+			return
+		}
+	}
+}
+
+func checkNoSpecialSymbols(pass *analysis.Pass, funcCall *ast.CallExpr) {
+	fst, pos := getFirstArgString(pass, funcCall)
+	if fst == "" {
+		return
+	}
+
+	for i, ch := range fst {
+		if !(unicode.IsSpace(ch) || unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '%' || ch == '=' || ch == '-') {
+			pass.Reportf(pos+token.Pos(i), "log messages shouldn't contain special symbols or emoji but %d char in %10q seem to break the rule", i+1, fst)
+			return
+		}
+	}
+}
+
+var sensitiveData = []string{
+	"password=",
+	"key=",
+	"token=",
+}
+
+func checkNoSensitiveData(pass *analysis.Pass, funcCall *ast.CallExpr) {
+	fst, pos := getFirstArgString(pass, funcCall)
+	if fst == "" {
+		return
+	}
+
+	for _, sens := range sensitiveData {
+		idx := strings.Index(fst, sens)
+		if idx != -1 {
+			pass.Reportf(pos+token.Pos(idx), "log messages shouldn't contain sensitive information but there's %q in string %10q", sens, fst)
+			return
+		}
+	}
 }
