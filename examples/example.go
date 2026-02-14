@@ -7,15 +7,17 @@ import (
 )
 
 func main() {
-	slog.Info("hello")
+	slog.Info("Это первый лог")
 
 	slogger := slog.New(slog.Default().Handler())
-	slogger.Debug("first")
+	slogger.Debug("This is the second log")
 
-	zap.L().Error("second")
+	zap.L().Error("and this is the 3d")
 
 	zlogger := zap.NewExample()
 	defer zlogger.Sync()
 
-	zlogger.Info("bye")
+	zlogger.Info("bye!!!!⭐")
+
+	zlogger.Info("password=")
 }

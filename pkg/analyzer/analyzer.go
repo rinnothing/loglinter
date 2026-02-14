@@ -4,6 +4,8 @@ import (
 	"go/ast"
 	"go/token"
 	"go/types"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"unicode"
@@ -38,8 +40,9 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		}
 
 		checkLowerFirst(pass, funcCall)
-		checkEnglish(pass, funcCall)
-		checkNoSpecialSymbols(pass, funcCall)
+		if checkNoSpecialSymbols(pass, funcCall) {
+			checkEnglish(pass, funcCall)
+		}
 		checkNoSensitiveData(pass, funcCall)
 	})
 
@@ -91,12 +94,28 @@ func isLogCall(pass *analysis.Pass, funcCall *ast.CallExpr) bool {
 	return false
 }
 
-var logMethods = map[string]struct{}{
-	"Debug": {},
-	"Info":  {},
-	"Warn":  {},
-	"Error": {},
-	"Fatal": {},
+var (
+	logMethods = map[string]struct{}{
+		"Debug": {},
+		"Info":  {},
+		"Warn":  {},
+		"Error": {},
+		"Fatal": {},
+	}
+	suffx = []string{
+		"f",
+		"ln",
+		"w",
+	}
+)
+
+func init() {
+	keys := slices.Sorted(maps.Keys(logMethods))
+	for _, s := range keys {
+		for _, suff := range suffx {
+			logMethods[s+suff] = struct{}{}
+		}
+	}
 }
 
 func isLogMethod(name string) bool {
@@ -135,7 +154,7 @@ func checkLowerFirst(pass *analysis.Pass, funcCall *ast.CallExpr) {
 		return
 	}
 
-	pass.Reportf(pos, "log messages should start from lowercase letter, but %10q doesn't", fst)
+	pass.Reportf(pos, "log messages should start from lowercase letter, but %q doesn't", fst)
 }
 
 func checkEnglish(pass *analysis.Pass, funcCall *ast.CallExpr) {
@@ -145,25 +164,27 @@ func checkEnglish(pass *analysis.Pass, funcCall *ast.CallExpr) {
 	}
 
 	for i, ch := range fst {
-		if !unicode.Is(unicode.Latin, ch) {
-			pass.Reportf(pos+token.Pos(i), "log messages should be english only, but %d char in %10q isn't", i+1, fst)
+		if !(unicode.Is(unicode.Latin, ch) || unicode.IsSpace(ch) || unicode.IsDigit(ch) || unicode.IsPunct(ch) || ch == '%' || ch == '=' || ch == '-') {
+			pass.Reportf(pos+token.Pos(i), "log messages should be english only, but %d char in %q isn't", i+1, fst)
 			return
 		}
 	}
 }
 
-func checkNoSpecialSymbols(pass *analysis.Pass, funcCall *ast.CallExpr) {
+func checkNoSpecialSymbols(pass *analysis.Pass, funcCall *ast.CallExpr) bool {
 	fst, pos := getFirstArgString(pass, funcCall)
 	if fst == "" {
-		return
+		return true
 	}
 
 	for i, ch := range fst {
 		if !(unicode.IsSpace(ch) || unicode.IsLetter(ch) || unicode.IsDigit(ch) || ch == '%' || ch == '=' || ch == '-') {
-			pass.Reportf(pos+token.Pos(i), "log messages shouldn't contain special symbols or emoji but %d char in %10q seem to break the rule", i+1, fst)
-			return
+			pass.Reportf(pos+token.Pos(i), "log messages shouldn't contain special symbols or emoji, but %d char in %q seem to break the rule", i+1, fst)
+			return false
 		}
 	}
+
+	return true
 }
 
 var sensitiveData = []string{
@@ -181,7 +202,7 @@ func checkNoSensitiveData(pass *analysis.Pass, funcCall *ast.CallExpr) {
 	for _, sens := range sensitiveData {
 		idx := strings.Index(fst, sens)
 		if idx != -1 {
-			pass.Reportf(pos+token.Pos(idx), "log messages shouldn't contain sensitive information but there's %q in string %10q", sens, fst)
+			pass.Reportf(pos+token.Pos(idx), "log messages shouldn't contain sensitive information but there's %q in string %q", sens, fst)
 			return
 		}
 	}
