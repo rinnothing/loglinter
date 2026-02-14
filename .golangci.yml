@@ -1,0 +1,18 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - loglinter
+
+  settings:
+    custom:
+      loglinter:
+        type: module
+        description: The linter which cheks for the right use of slog and zap linters
+        original-url: github.com/rinothing/loglinter
+        settings:
+          sensitive_data:
+            - "password="
+            - "key="
+            - "token="

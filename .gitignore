@@ -32,3 +32,4 @@ go.work.sum
 # .vscode/
 
 pkg/analyzer/testdata/src/go.uber.org/
+testrepo

@@ -16,16 +16,33 @@ import (
 	"golang.org/x/tools/go/ast/inspector"
 )
 
-var Analyzer = &analysis.Analyzer{
-	Name: "gologlinter",
-	Doc:  "Checks that log calls are formatted correctly",
-	Run:  run,
-	Requires: []*analysis.Analyzer{
-		inspect.Analyzer,
-	},
+var Analyzer *analysis.Analyzer
+
+type innerAnalyzer struct {
+	sensitiveData []string
 }
 
-func run(pass *analysis.Pass) (interface{}, error) {
+func New(sensitiveData []string) *analysis.Analyzer {
+	if sensitiveData == nil {
+		sensitiveData = defaultSensitiveData
+	}
+	inner := &innerAnalyzer{sensitiveData: sensitiveData}
+
+	return &analysis.Analyzer{
+		Name: "gologlinter",
+		Doc:  "Checks that log calls are formatted correctly",
+		Run:  inner.run,
+		Requires: []*analysis.Analyzer{
+			inspect.Analyzer,
+		},
+	}
+}
+
+func init() {
+	Analyzer = New(defaultSensitiveData)
+}
+
+func (inner *innerAnalyzer) run(pass *analysis.Pass) (interface{}, error) {
 	inspector := pass.ResultOf[inspect.Analyzer].(*inspector.Inspector)
 
 	nodeFilter := []ast.Node{
@@ -43,7 +60,7 @@ func run(pass *analysis.Pass) (interface{}, error) {
 		if checkNoSpecialSymbols(pass, funcCall) {
 			checkEnglish(pass, funcCall)
 		}
-		checkNoSensitiveData(pass, funcCall)
+		inner.checkNoSensitiveData(pass, funcCall)
 	})
 
 	return nil, nil
@@ -187,19 +204,19 @@ func checkNoSpecialSymbols(pass *analysis.Pass, funcCall *ast.CallExpr) bool {
 	return true
 }
 
-var sensitiveData = []string{
+var defaultSensitiveData = []string{
 	"password=",
 	"key=",
 	"token=",
 }
 
-func checkNoSensitiveData(pass *analysis.Pass, funcCall *ast.CallExpr) {
+func (inner *innerAnalyzer) checkNoSensitiveData(pass *analysis.Pass, funcCall *ast.CallExpr) {
 	fst, pos := getFirstArgString(pass, funcCall)
 	if fst == "" {
 		return
 	}
 
-	for _, sens := range sensitiveData {
+	for _, sens := range inner.sensitiveData {
 		idx := strings.Index(fst, sens)
 		if idx != -1 {
 			pass.Reportf(pos+token.Pos(idx), "log messages shouldn't contain sensitive information but there's %q in string %q", sens, fst)

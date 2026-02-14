@@ -6,7 +6,7 @@ import (
 	"go.uber.org/zap"
 )
 
-func capitalLetter() {
+func correct() {
 	slog.Info("slog")
 
 	slogger := slog.New(slog.Default().Handler())

@@ -3,6 +3,7 @@ module github.com/rinnothing/loglinter
 go 1.25.1
 
 require (
+	github.com/golangci/plugin-module-register v0.1.2
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/tools v0.42.0
